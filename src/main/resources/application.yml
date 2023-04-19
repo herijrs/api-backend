@@ -15,13 +15,14 @@ spring:
   # session 失效时间（分钟）
   session:
     timeout: 86400
-    store-type: redis
+#    store-type: redis
   # redis 配置
 #  redis:
 #    port: 6379
 #    host: localhost
 #    database: 0
 server:
+  address: 0.0.0.0
   port: 7529
   servlet:
     context-path: /api
