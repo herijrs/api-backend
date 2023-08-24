@@ -1,9 +1,6 @@
 package com.heri.apicommon.model.entity;
 
-import com.baomidou.mybatisplus.annotation.IdType;
-import com.baomidou.mybatisplus.annotation.TableField;
-import com.baomidou.mybatisplus.annotation.TableId;
-import com.baomidou.mybatisplus.annotation.TableName;
+import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 
 import java.io.Serializable;
@@ -20,7 +17,7 @@ public class InterfaceInfo implements Serializable {
      * 
      */
     @TableId(type = IdType.AUTO)
-    private Integer id;
+    private Long id;
 
     /**
      * 名称
@@ -38,6 +35,11 @@ public class InterfaceInfo implements Serializable {
     private String url;
 
     /**
+     * 接口路径
+     */
+    private String path;
+
+    /**
      * 请求头
      */
     private String requestHeader;
@@ -47,7 +49,20 @@ public class InterfaceInfo implements Serializable {
      */
     private String responseHeader;
 
+    /**
+     * 响应参数说明
+     */
+    private String responseParamsRemark;
+
+    /**
+     * 请求参数
+     */
     private String requestParams;
+
+    /**
+     * 请求参数说明
+     */
+    private String requestParamsRemark;
 
     /**
      * 接口状态（0：关闭，1：开启）
@@ -78,6 +93,7 @@ public class InterfaceInfo implements Serializable {
     /**
      * 
      */
+    @TableLogic
     private Integer isDelete;
 
     @TableField(exist = false)

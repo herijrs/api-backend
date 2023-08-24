@@ -2,16 +2,17 @@ package com.heri.project.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.baomidou.mybatisplus.extension.plugins.pagination.PageDTO;
+import com.heri.apicommon.common.*;
+import com.heri.apicommon.constant.UserConstant;
+import com.heri.apicommon.exception.BusinessException;
+import com.heri.apicommon.exception.ThrowUtils;
 import com.heri.apicommon.model.entity.User;
-import com.heri.project.common.BaseResponse;
-import com.heri.project.common.DeleteRequest;
-import com.heri.project.common.ErrorCode;
-import com.heri.project.common.ResultUtils;
-import com.heri.project.exception.BusinessException;
+import com.heri.apicommon.model.enums.vo.UserVO;
+import com.heri.project.annotation.AuthCheck;
 import com.heri.project.model.dto.user.*;
-import com.heri.project.model.vo.UserVO;
+import com.heri.project.model.vo.LoginUserVO;
 import com.heri.project.service.UserService;
+import com.heri.project.utils.JWTRespond;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
@@ -32,8 +33,6 @@ public class UserController {
 
     @Resource
     private UserService userService;
-
-    // region 登录相关
 
     /**
      * 用户注册
@@ -64,7 +63,7 @@ public class UserController {
      * @return
      */
     @PostMapping("/login")
-    public BaseResponse<User> userLogin(@RequestBody UserLoginRequest userLoginRequest, HttpServletRequest request) {
+    public BaseResponse<JWTRespond> userLogin(@RequestBody UserLoginRequest userLoginRequest, HttpServletRequest request) {
         if (userLoginRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
@@ -73,8 +72,15 @@ public class UserController {
         if (StringUtils.isAnyBlank(userAccount, userPassword)) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        User user = userService.userLogin(userAccount, userPassword, request);
-        return ResultUtils.success(user);
+        // 校验密码，并获取JWT令牌
+        JWTRespond jwtRespond;
+        LoginUserVO loginUserVO = userService.userLogin(userAccount, userPassword, request);
+        try {
+            jwtRespond = userService.getJWT(loginUserVO,request);
+        }catch (Exception e){
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "登录失败，系统错误");//获取JWT失败
+        }
+        return ResultUtils.success(jwtRespond);
     }
 
     /**
@@ -99,35 +105,26 @@ public class UserController {
      * @return
      */
     @GetMapping("/get/login")
-    public BaseResponse<UserVO> getLoginUser(HttpServletRequest request) {
-        User user = userService.getLoginUser(request);
-        UserVO userVO = new UserVO();
-        BeanUtils.copyProperties(user, userVO);
-        return ResultUtils.success(userVO);
+    public BaseResponse<LoginUserVO> getLoginUser(HttpServletRequest request) {
+        return ResultUtils.success(userService.getLoginUserByThreadLocal());
     }
 
-    // endregion
-
-    // region 增删改查
 
     /**
      * 创建用户
      *
      * @param userAddRequest
-     * @param request
      * @return
      */
     @PostMapping("/add")
-    public BaseResponse<Long> addUser(@RequestBody UserAddRequest userAddRequest, HttpServletRequest request) {
+    public BaseResponse<Long> addUser(@RequestBody UserAddRequest userAddRequest) {
         if (userAddRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         User user = new User();
         BeanUtils.copyProperties(userAddRequest, user);
         boolean result = userService.save(user);
-        if (!result) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR);
-        }
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         return ResultUtils.success(user.getId());
     }
 
@@ -135,11 +132,10 @@ public class UserController {
      * 删除用户
      *
      * @param deleteRequest
-     * @param request
      * @return
      */
     @PostMapping("/delete")
-    public BaseResponse<Boolean> deleteUser(@RequestBody DeleteRequest deleteRequest, HttpServletRequest request) {
+    public BaseResponse<Boolean> deleteUser(@RequestBody DeleteRequest deleteRequest) {
         if (deleteRequest == null || deleteRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
@@ -162,6 +158,7 @@ public class UserController {
         User user = new User();
         BeanUtils.copyProperties(userUpdateRequest, user);
         boolean result = userService.updateById(user);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
         return ResultUtils.success(result);
     }
 
@@ -169,71 +166,110 @@ public class UserController {
      * 根据 id 获取用户
      *
      * @param id
-     * @param request
      * @return
      */
     @GetMapping("/get")
-    public BaseResponse<UserVO> getUserById(int id, HttpServletRequest request) {
+    public BaseResponse<User> getUserById(long id) {
         if (id <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         User user = userService.getById(id);
-        UserVO userVO = new UserVO();
-        BeanUtils.copyProperties(user, userVO);
-        return ResultUtils.success(userVO);
+        ThrowUtils.throwIf(user == null, ErrorCode.NOT_FOUND_ERROR);
+        return ResultUtils.success(user);
     }
 
     /**
-     * 获取用户列表
+     * 根据 id 获取包装类
      *
-     * @param userQueryRequest
-     * @param request
+     * @param id
      * @return
      */
-    @GetMapping("/list")
-    public BaseResponse<List<UserVO>> listUser(UserQueryRequest userQueryRequest, HttpServletRequest request) {
-        User userQuery = new User();
-        if (userQueryRequest != null) {
-            BeanUtils.copyProperties(userQueryRequest, userQuery);
-        }
-        QueryWrapper<User> queryWrapper = new QueryWrapper<>(userQuery);
-        List<User> userList = userService.list(queryWrapper);
-        List<UserVO> userVOList = userList.stream().map(user -> {
-            UserVO userVO = new UserVO();
-            BeanUtils.copyProperties(user, userVO);
-            return userVO;
-        }).collect(Collectors.toList());
-        return ResultUtils.success(userVOList);
+    @GetMapping("/get/vo")
+    public BaseResponse<com.heri.apicommon.model.enums.vo.UserVO> getUserVOById(long id ) {
+        BaseResponse<User> response = getUserById(id);
+        User user = response.getData();
+        return ResultUtils.success(userService.getUserVO(user));
     }
 
     /**
-     * 分页获取用户列表
+     * 分页获取用户列表（仅管理员）
      *
      * @param userQueryRequest
-     * @param request
+
      * @return
      */
-    @GetMapping("/list/page")
-    public BaseResponse<Page<UserVO>> listUserByPage(UserQueryRequest userQueryRequest, HttpServletRequest request) {
-        long current = 1;
-        long size = 10;
-        User userQuery = new User();
-        if (userQueryRequest != null) {
-            BeanUtils.copyProperties(userQueryRequest, userQuery);
-            current = userQueryRequest.getCurrent();
-            size = userQueryRequest.getPageSize();
+    @PostMapping("/list/page")
+    @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    public BaseResponse<Page<User>> ListUserByPage(@RequestBody UserQueryRequest userQueryRequest
+    ) {
+        long current = userQueryRequest.getCurrent();
+        long size = userQueryRequest.getPageSize();
+        Page<User> userPage = userService.page(new Page<>(current, size),
+                userService.getQueryWrapper(userQueryRequest));
+        return ResultUtils.success(userPage);
+    }
+
+    /**
+     * 分页获取用户封装列表
+     *
+     * @param userQueryRequest
+     * @return
+     */
+    @PostMapping("/list/page/vo")
+    public BaseResponse<Page<UserVO>> listUserVOByPage(@RequestBody UserQueryRequest userQueryRequest) {
+        if (userQueryRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        QueryWrapper<User> queryWrapper = new QueryWrapper<>(userQuery);
-        Page<User> userPage = userService.page(new Page<>(current, size), queryWrapper);
-        Page<UserVO> userVOPage = new PageDTO<>(userPage.getCurrent(), userPage.getSize(), userPage.getTotal());
-        List<UserVO> userVOList = userPage.getRecords().stream().map(user -> {
-            UserVO userVO = new UserVO();
-            BeanUtils.copyProperties(user, userVO);
-            return userVO;
-        }).collect(Collectors.toList());
-        userVOPage.setRecords(userVOList);
+        long current = userQueryRequest.getCurrent();
+        long size = userQueryRequest.getPageSize();
+        // 限制爬虫
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        Page<User> userPage = userService.page(new Page<>(current, size),
+                userService.getQueryWrapper(userQueryRequest));
+        Page<UserVO> userVOPage = new Page<>(current, size, userPage.getTotal());
+        List<UserVO> userVO = userService.getUserVO(userPage.getRecords());
+        userVOPage.setRecords(userVO);
         return ResultUtils.success(userVOPage);
     }
 
     // endregion
+
+    /**
+     * 更新个人信息
+     *
+     * @param userUpdateMyRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/update/my")
+    public BaseResponse<Boolean> updateMyUser(@RequestBody UserUpdateRequest userUpdateMyRequest,
+                                              HttpServletRequest request) {
+        if (userUpdateMyRequest == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        LoginUserVO loginUser = userService.getLoginUserByThreadLocal();
+        User user = new User();
+        BeanUtils.copyProperties(userUpdateMyRequest, user);
+        user.setId(loginUser.getId());
+        boolean result = userService.updateById(user);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        return ResultUtils.success(true);
+    }
+
+    /**
+     * 更新用户 secretKey
+     *
+     * @param idRequest
+     * @return
+     */
+    @PostMapping("/update/secret_key")
+    public BaseResponse<Boolean> updateSecretKey(@RequestBody IdRequest idRequest
+    ) {
+        if (idRequest == null || idRequest.getId() == null) {
+            throw new BusinessException(ErrorCode.PARAMS_ERROR);
+        }
+        boolean result = userService.updateSecretKey(idRequest.getId());
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);
+        return ResultUtils.success(true);
+    }
 }

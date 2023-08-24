@@ -1,7 +1,11 @@
 package com.heri.project.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.heri.apicommon.model.entity.UserInterfaceInfo;
+import com.heri.project.model.dto.userInterfaceInfo.UserInterfaceInfoQueryRequest;
+
+import java.util.List;
 
 /**
 * @author heri
@@ -12,6 +16,12 @@ public interface UserInterfaceInfoService extends IService<UserInterfaceInfo> {
 
 
     void validUserInterfaceInfo(UserInterfaceInfo userInterfaceInfo, boolean add);
+
+    QueryWrapper<UserInterfaceInfo> getQueryWrapper(UserInterfaceInfoQueryRequest userInterfaceInfoQueryRequest);
+
+    List<UserInterfaceInfo> listTopInvokeInterfaceInfo(int limit);
+
+    Boolean addUserInterface(UserInterfaceInfo userInterfaceInfo);
 
 
 }

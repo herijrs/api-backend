@@ -39,6 +39,8 @@ api:
   client:
     access-key: heri
     secret-key: abcdefg
+  gateway:
+    host:
 dubbo:
   application:
     name: dubbo-springboot-demo-provider

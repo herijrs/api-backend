@@ -1,10 +1,12 @@
 package com.heri.project.aop;
 
 import com.baomidou.mybatisplus.core.toolkit.CollectionUtils;
+import com.heri.apicommon.common.ErrorCode;
+import com.heri.apicommon.exception.BusinessException;
 import com.heri.apicommon.model.entity.User;
 import com.heri.project.annotation.AuthCheck;
-import com.heri.project.common.ErrorCode;
-import com.heri.project.exception.BusinessException;
+import com.heri.project.model.enums.UserRoleEnum;
+import com.heri.project.model.vo.LoginUserVO;
 import com.heri.project.service.UserService;
 import org.apache.commons.lang3.StringUtils;
 import org.aspectj.lang.ProceedingJoinPoint;
@@ -43,24 +45,25 @@ public class AuthInterceptor {
      */
     @Around("@annotation(authCheck)")
     public Object doInterceptor(ProceedingJoinPoint joinPoint, AuthCheck authCheck) throws Throwable {
-        List<String> anyRole = Arrays.stream(authCheck.anyRole()).filter(StringUtils::isNotBlank).collect(Collectors.toList());
         String mustRole = authCheck.mustRole();
-        RequestAttributes requestAttributes = RequestContextHolder.currentRequestAttributes();
-        HttpServletRequest request = ((ServletRequestAttributes) requestAttributes).getRequest();
         // 当前登录用户
-        User user = userService.getLoginUser(request);
-        // 拥有任意权限即通过
-        if (CollectionUtils.isNotEmpty(anyRole)) {
-            String userRole = user.getUserRole();
-            if (!anyRole.contains(userRole)) {
-                throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
-            }
-        }
+        LoginUserVO user = userService.getLoginUserByThreadLocal();
         // 必须有所有权限才通过
         if (StringUtils.isNotBlank(mustRole)) {
-            String userRole = user.getUserRole();
-            if (!mustRole.equals(userRole)) {
+            UserRoleEnum mustUserRoleEnum = UserRoleEnum.getEnumByValue(mustRole);
+            if (mustUserRoleEnum == null) {
                 throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
+            }
+            String userRole = user.getUserRole();
+            // 如果被封号，直接拒绝
+            if (UserRoleEnum.BAN.equals(mustUserRoleEnum)) {
+                throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
+            }
+            // 必须有管理员权限
+            if (UserRoleEnum.ADMIN.equals(mustUserRoleEnum)) {
+                if (!mustRole.equals(userRole)) {
+                    throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
+                }
             }
         }
         // 通过权限校验，放行

@@ -1,6 +1,6 @@
 package com.heri.project.model.dto.user;
 
-import com.heri.project.common.PageRequest;
+import com.heri.apicommon.common.PageRequest;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 

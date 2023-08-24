@@ -10,11 +10,11 @@ import com.heri.apicommon.model.entity.InterfaceInfo;
 public interface InnerInterfaceInfoService{
 
     /**
-     * 数据库中查找模拟接口是否存在
-     * @param path
-     * @param method
-     * @return
+     * 从数据库中查询模拟接口是否存在（请求路径、请求方法、请求参数）
+     *
+     * @return InterfaceInfo 接口信息
      */
-    InterfaceInfo getInterfaceInfo(String path, String method);
+    InterfaceInfo getInterfaceInfo(long id,String url, String method,String path);
+
 
 }

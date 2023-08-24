@@ -1,30 +1,34 @@
 package com.heri.project.controller;
 
-import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.google.gson.Gson;
-import com.heri.apiclientsdk.client.ApiClient;
+import com.heri.apicommon.common.*;
+import com.heri.apicommon.constant.CommonConstant;
+import com.heri.apicommon.constant.UserConstant;
+import com.heri.apicommon.exception.BusinessException;
+import com.heri.apicommon.exception.ThrowUtils;
 import com.heri.apicommon.model.entity.InterfaceInfo;
-import com.heri.apicommon.model.entity.User;
 import com.heri.project.annotation.AuthCheck;
-import com.heri.project.common.*;
-import com.heri.project.constant.CommonConstant;
-import com.heri.project.exception.BusinessException;
-import com.heri.project.model.dto.interfaceInfo.InterfaceInfoAddRequest;
-import com.heri.project.model.dto.interfaceInfo.InterfaceInfoInvokeRequest;
-import com.heri.project.model.dto.interfaceInfo.InterfaceInfoQueryRequest;
-import com.heri.project.model.dto.interfaceInfo.InterfaceInfoUpdateRequest;
+import com.heri.project.model.dto.interfaceInfo.*;
 import com.heri.project.model.enums.InterfaceInfoStatusEnum;
+import com.heri.project.model.vo.InterfaceInfoVO;
+import com.heri.project.model.vo.LoginUserVO;
 import com.heri.project.service.InterfaceInfoService;
 import com.heri.project.service.UserService;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.web.bind.annotation.*;
 
 import javax.annotation.Resource;
 import javax.servlet.http.HttpServletRequest;
-import java.util.List;
+import javax.servlet.http.HttpServletResponse;
+import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 
 /**
  * 接口管理
@@ -42,11 +46,20 @@ public class InterfaceInfoController {
     @Resource
     private UserService userService;
 
-    @Resource
-    private ApiClient apiClient;
 
-    // region 增删改查
+    private final static Gson GSON = new Gson();
 
+
+    /**
+     * 仅本人或管理员可编辑该接口
+     * @param oldInterfaceInfo
+     */
+    private void AuthCheckByInterface(InterfaceInfo oldInterfaceInfo) {
+        LoginUserVO user = userService.getLoginUserByThreadLocal();
+        if (!oldInterfaceInfo.getUserId().equals(user.getId()) && !userService.isAdmin(user)) {
+            throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
+        }
+    }
     /**
      * 创建
      *
@@ -63,12 +76,15 @@ public class InterfaceInfoController {
         BeanUtils.copyProperties(interfaceInfoAddRequest, interfaceInfo);
         // 校验
         interfaceInfoService.validInterfaceInfo(interfaceInfo, true);
-        User loginUser = userService.getLoginUser(request);
+        LoginUserVO loginUser = userService.getLoginUserByThreadLocal();
+//        User loginUser = userService.getLoginUser(request);
+
         interfaceInfo.setUserId(loginUser.getId());
-        boolean result = interfaceInfoService.save(interfaceInfo);
-        if (!result) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR);
-        }
+        interfaceInfo.setRequestParamsRemark(JSONUtil.toJsonStr(interfaceInfoAddRequest.getRequestParamsRemark()));
+        interfaceInfo.setResponseParamsRemark(JSONUtil.toJsonStr(interfaceInfoAddRequest.getResponseParamsRemark()));
+        // 创建者直接就开通该接口
+        boolean result = interfaceInfoService.addInterface(interfaceInfo);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);//保存失败报错
         long newInterfaceInfoId = interfaceInfo.getId();
         return ResultUtils.success(newInterfaceInfoId);
     }
@@ -85,18 +101,13 @@ public class InterfaceInfoController {
         if (deleteRequest == null || deleteRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        User user = userService.getLoginUser(request);
         long id = deleteRequest.getId();
         // 判断是否存在
         InterfaceInfo oldInterfaceInfo = interfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
+        ThrowUtils.throwIf(oldInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
         // 仅本人或管理员可删除
-        if (!oldInterfaceInfo.getUserId().equals(user.getId()) && !userService.isAdmin(request)) {
-            throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
-        }
-        boolean b = interfaceInfoService.removeById(id);
+        AuthCheckByInterface(oldInterfaceInfo);
+        boolean b = interfaceInfoService.removeByIdTranslator(id);
         return ResultUtils.success(b);
     }
 
@@ -108,27 +119,19 @@ public class InterfaceInfoController {
      * @return
      */
     @PostMapping("/update")
-    public BaseResponse<Boolean> updateInterfaceInfo(@RequestBody InterfaceInfoUpdateRequest interfaceInfoUpdateRequest,
+    @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
+    public BaseResponse<Boolean> updateInterfaceInfo(@RequestBody InterfaceInfoEditRequest interfaceInfoUpdateRequest,
                                             HttpServletRequest request) {
         if (interfaceInfoUpdateRequest == null || interfaceInfoUpdateRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        InterfaceInfo interfaceInfo = new InterfaceInfo();
-        BeanUtils.copyProperties(interfaceInfoUpdateRequest, interfaceInfo);
-        // 参数校验
-        interfaceInfoService.validInterfaceInfo(interfaceInfo, false);
-        User user = userService.getLoginUser(request);
-        long id = interfaceInfoUpdateRequest.getId();
         // 判断是否存在
+        long id = interfaceInfoUpdateRequest.getId();
         InterfaceInfo oldInterfaceInfo = interfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
+        ThrowUtils.throwIf(oldInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
         // 仅本人或管理员可修改
-        if (!oldInterfaceInfo.getUserId().equals(user.getId()) && !userService.isAdmin(request)) {
-            throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
-        }
-        boolean result = interfaceInfoService.updateById(interfaceInfo);
+        AuthCheckByInterface(oldInterfaceInfo);
+        boolean result = interfaceInfoService.updateInterfaceInfo(interfaceInfoUpdateRequest);
         return ResultUtils.success(result);
     }
 
@@ -138,96 +141,145 @@ public class InterfaceInfoController {
      * @param id
      * @return
      */
-    @GetMapping("/get")
-    public BaseResponse<InterfaceInfo> getInterfaceInfoById(long id) {
+    @GetMapping("/get/vo")
+    public BaseResponse<InterfaceInfoVO> getInterfaceInfoVOById(long id ) {
         if (id <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         InterfaceInfo interfaceInfo = interfaceInfoService.getById(id);
-        return ResultUtils.success(interfaceInfo);
+        if (interfaceInfo == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
+        return ResultUtils.success(interfaceInfoService.getInterfaceInfoVO(interfaceInfo));
     }
 
     /**
-     * 获取列表（仅管理员可使用）
+     * 获取所有接口列表，用于前端API商店页面的展示以及接口管理页面展示
      *
      * @param interfaceInfoQueryRequest
      * @return
      */
-    @AuthCheck(mustRole = "admin")
-    @GetMapping("/list")
-    public BaseResponse<List<InterfaceInfo>> listInterfaceInfo(InterfaceInfoQueryRequest interfaceInfoQueryRequest) {
-        InterfaceInfo interfaceInfoQuery = new InterfaceInfo();
-        if (interfaceInfoQueryRequest != null) {
-            BeanUtils.copyProperties(interfaceInfoQueryRequest, interfaceInfoQuery);
+    @PostMapping("/list/page/vo")
+    public BaseResponse<Page<InterfaceInfoVO>> listInterfaceInfoVOByPage(@RequestBody InterfaceInfoQueryRequest interfaceInfoQueryRequest,HttpServletRequest request)
+    {
+        long current = interfaceInfoQueryRequest.getCurrent();
+        long size = interfaceInfoQueryRequest.getPageSize();
+        // 限制爬虫
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        // 按时间排序
+        interfaceInfoQueryRequest.setSortField("createTime");
+        // 倒序排序
+        interfaceInfoQueryRequest.setSortOrder(CommonConstant.SORT_ORDER_DESC);
+        // 非管理员只能查已开启的接口
+        LoginUserVO user = userService.getLoginUserByThreadLocal();
+        if (!userService.isAdmin(user)) {
+            interfaceInfoQueryRequest.setStatus(1);
         }
-        QueryWrapper<InterfaceInfo> queryWrapper = new QueryWrapper<>(interfaceInfoQuery);
-        List<InterfaceInfo> interfaceInfoList = interfaceInfoService.list(queryWrapper);
-        return ResultUtils.success(interfaceInfoList);
+
+        // 分页查询
+        Page<InterfaceInfo> interfaceInfoPage = interfaceInfoService.page(new Page<>(current, size),
+                interfaceInfoService.getQueryWrapper(interfaceInfoQueryRequest));
+        // 转为VO
+        return ResultUtils.success(interfaceInfoService.getInterfaceInfoVOPage(interfaceInfoPage, request));
     }
 
     /**
-     * 分页获取列表
+     * 分页获取当前用户拥有的资源列表，也就是开通的接口，用于前端我的接口页面的展示
      *
      * @param interfaceInfoQueryRequest
      * @param request
      * @return
      */
-    @GetMapping("/list/page")
-    public BaseResponse<Page<InterfaceInfo>> listInterfaceInfoByPage(InterfaceInfoQueryRequest interfaceInfoQueryRequest, HttpServletRequest request) {
+    @PostMapping("/my/list/page/vo")
+    public BaseResponse<Page<InterfaceInfoVO>> ListMyInterfaceInfoVOByPage(@RequestBody InterfaceInfoQueryRequest interfaceInfoQueryRequest,
+                                                                           HttpServletRequest request) {
         if (interfaceInfoQueryRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        InterfaceInfo interfaceInfoQuery = new InterfaceInfo();
-        BeanUtils.copyProperties(interfaceInfoQueryRequest, interfaceInfoQuery);
         long current = interfaceInfoQueryRequest.getCurrent();
         long size = interfaceInfoQueryRequest.getPageSize();
-        String sortField = interfaceInfoQueryRequest.getSortField();
-        String sortOrder = interfaceInfoQueryRequest.getSortOrder();
-        String content = interfaceInfoQuery.getDescription();
-        // content 需支持模糊搜索
-        interfaceInfoQuery.setDescription(null);
         // 限制爬虫
-        if (size > 50) {
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        interfaceInfoQueryRequest.setSortField("createTime");
+        // 按创建时间倒序排序
+        interfaceInfoQueryRequest.setSortOrder(CommonConstant.SORT_ORDER_DESC);
+        // 分页查询
+        Page<InterfaceInfo> interfaceInfoPage = interfaceInfoService.page(new Page<>(current, size),
+                interfaceInfoService.getQueryWrapper(interfaceInfoQueryRequest));
+        // 获取VO
+        return ResultUtils.success(interfaceInfoService.getInterfaceInfoVOByUserIdPage(interfaceInfoPage, request));
+    }
+
+    // endregion
+
+    /**
+     * 分页获取当前用户创建的资源列表，也就是创建的接口，用于前端我的接口页面的展示
+     *
+     * @param interfaceInfoQueryRequest
+     * @param request
+     * @return
+     */
+    @PostMapping("/own/list/page/vo")
+    public BaseResponse<Page<InterfaceInfoVO>> ListOwnInterfaceInfoVOByPage(@RequestBody InterfaceInfoQueryRequest interfaceInfoQueryRequest,
+                                                                            HttpServletRequest request) {
+        if (interfaceInfoQueryRequest == null) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        QueryWrapper<InterfaceInfo> queryWrapper = new QueryWrapper<>(interfaceInfoQuery);
-        queryWrapper.like(StringUtils.isNotBlank(content), "content", content);
-        queryWrapper.orderBy(StringUtils.isNotBlank(sortField),
-                sortOrder.equals(CommonConstant.SORT_ORDER_ASC), sortField);
-        Page<InterfaceInfo> interfaceInfoPage = interfaceInfoService.page(new Page<>(current, size), queryWrapper);
-        return ResultUtils.success(interfaceInfoPage);
+        long current = interfaceInfoQueryRequest.getCurrent();
+        long size = interfaceInfoQueryRequest.getPageSize();
+        // 限制爬虫
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        interfaceInfoQueryRequest.setSortField("createTime");
+        // 按创建时间倒序排序
+        interfaceInfoQueryRequest.setSortOrder(CommonConstant.SORT_ORDER_DESC);
+        // 限定只查创建者是当前用户的接口
+        LoginUserVO loginUser = userService.getLoginUserByThreadLocal();
+        interfaceInfoQueryRequest.setUserId(loginUser.getId());
+        // 分页查询
+        Page<InterfaceInfo> interfaceInfoPage = interfaceInfoService.page(new Page<>(current, size),
+                interfaceInfoService.getQueryWrapper(interfaceInfoQueryRequest));
+        // 获取VO
+        Page<InterfaceInfoVO> interfaceInfoVOPage = interfaceInfoService.getInterfaceInfoVOPage(interfaceInfoPage, request);
+        return ResultUtils.success(interfaceInfoVOPage);
     }
 
 
+    /**
+     * 发布接口
+     * @param interfaceInfoInvokeRequest
+     * @param request
+     * @return
+     */
     @PostMapping("/online")
     @AuthCheck(mustRole = "admin")
-    public BaseResponse<Boolean> onlineInterfaceInfo(@RequestBody IdRequest idRequest,
+    public BaseResponse<Boolean> onlineInterfaceInfo(@RequestBody InterfaceInfoInvokeRequest interfaceInfoInvokeRequest,
                                                      HttpServletRequest request) {
-        if(idRequest == null || idRequest.getId() <= 0){
+        if (interfaceInfoInvokeRequest == null || interfaceInfoInvokeRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
 
-        Long id = idRequest.getId();
+        Long id = interfaceInfoInvokeRequest.getId();
         // 判断是否存在
         InterfaceInfo oldInterfaceInfo = interfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
+        ThrowUtils.throwIf(oldInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
+        //仅本人或管理员可发布该接口
+        AuthCheckByInterface(oldInterfaceInfo);
 
-        //判断接口是否能调用
-        com.heri.apiclientsdk.model.User user = new com.heri.apiclientsdk.model.User();
-        user.setUserName("heri");
-        String userName = apiClient.getUserNameByPost(user);
-        if(StringUtils.isBlank(userName)){
-            throw new BusinessException(ErrorCode.SYSTEM_ERROR,"接口验证失败");
-        }
+        // 如果下面这一步没抛异常，那么就可以成功上线接口，不需要返回值了
+        interfaceInfoService.getInvokeResult(interfaceInfoInvokeRequest,request,oldInterfaceInfo);
         InterfaceInfo interfaceInfo = new InterfaceInfo();
-        interfaceInfo.setId(Math.toIntExact(id));
-        interfaceInfo.setStatus(InterfaceInfoStatusEnum.ONLINE.getValue());
+        interfaceInfo.setId(id);
+        interfaceInfo.setStatus(InterfaceInfoStatusEnum.ONLINE.getValue());//上线接口
         boolean result = interfaceInfoService.updateById(interfaceInfo);
         return ResultUtils.success(result);
     }
 
+    /**
+     * 下线接口
+     * @param idRequest
+     * @param request
+     * @return
+     */
     @PostMapping("/offline")
     @AuthCheck(mustRole = "admin")
     public BaseResponse<Boolean> offlineInterfaceInfo(@RequestBody IdRequest idRequest,
@@ -239,14 +291,11 @@ public class InterfaceInfoController {
         Long id = idRequest.getId();
         // 判断是否存在
         InterfaceInfo oldInterfaceInfo = interfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
+        ThrowUtils.throwIf(oldInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
 
-        InterfaceInfo interfaceInfo = new InterfaceInfo();
-        interfaceInfo.setId(Math.toIntExact(id));
-        interfaceInfo.setStatus(InterfaceInfoStatusEnum.OFFLINE.getValue());
-        boolean result = interfaceInfoService.updateById(interfaceInfo);
+        //仅本人或管理员可下线该接口
+        AuthCheckByInterface(oldInterfaceInfo);
+        boolean result = interfaceInfoService.offlineInterface(id);
         return ResultUtils.success(result);
     }
 
@@ -270,21 +319,40 @@ public class InterfaceInfoController {
         String userRequestParames = interfaceInfoQueryRequest.getUserRequestParams();
         // 判断是否存在
         InterfaceInfo oldInterfaceInfo = interfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
-        if (oldInterfaceInfo.getStatus() == InterfaceInfoStatusEnum.OFFLINE.getValue()) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR,"接口已关闭");
-        }
-        User loginUser = userService.getLoginUser(request);
-        String accessKey = loginUser.getAccessKey();
-        String secretKey = loginUser.getSecretKey();
-        ApiClient tempClient = new ApiClient(accessKey,secretKey);
-        Gson gson = new Gson();
-        com.heri.apiclientsdk.model.User user = gson.fromJson(userRequestParames, com.heri.apiclientsdk.model.User.class);
-        String userNameByPost = tempClient.getUserNameByPost(user);
-        return ResultUtils.success(userNameByPost);
+        ThrowUtils.throwIf(oldInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
+        ThrowUtils.throwIf(oldInterfaceInfo.getStatus().equals(InterfaceInfoStatusEnum.OFFLINE.getValue()),ErrorCode.PARAMS_ERROR,"接口已关闭");
+
+        String invokeResult = interfaceInfoService.getInvokeResult(interfaceInfoQueryRequest, request, oldInterfaceInfo);
+
+        return ResultUtils.success(invokeResult);
     }
+
+    // 下载SDK使用
+    @GetMapping("/sdk")
+    public void getSdk(HttpServletResponse response) throws IOException {
+        // 获取要下载的文件
+        org.springframework.core.io.Resource resource = new ClassPathResource("Re-Api-client-sdk-0.0.1-SNAPSHOT.jar");
+        File file = resource.getFile();
+
+        // 设置响应头
+        response.setContentType("application/octet-stream");
+        response.setHeader("Content-Disposition", "attachment; filename=" + file.getName());
+
+        // 将文件内容写入响应
+        try (InputStream in = Files.newInputStream(file.toPath());
+             OutputStream out = response.getOutputStream()) {
+            byte[] buffer = new byte[4096];
+            int length;
+            while ((length = in.read(buffer)) > 0) {
+                out.write(buffer, 0, length);
+            }
+            out.flush();
+        } catch (IOException e) {
+            // 处理异常
+            e.printStackTrace();
+        }
+    }
+
 
 
 

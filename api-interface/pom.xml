@@ -8,14 +8,17 @@
         <version>2.7.0</version>
         <relativePath/> <!-- lookup parent from repository -->
     </parent>
+
     <groupId>com.heri</groupId>
     <artifactId>api-interface</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>api-interface</name>
     <description>api-interface</description>
+
     <properties>
         <java.version>1.8</java.version>
     </properties>
+
     <dependencies>
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -49,6 +52,46 @@
             <artifactId>hutool-all</artifactId>
             <version>5.8.16</version>
         </dependency>
+
+        <dependency>
+            <groupId>com.heri</groupId>
+            <artifactId>api-common</artifactId>
+            <version>0.0.1</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.github.xiaoymin</groupId>
+            <artifactId>knife4j-spring-boot-starter</artifactId>
+            <version>3.0.3</version>
+        </dependency>
+
+        <!--用于远程调用其他微服务提供的接口-->
+        <!--nacos-discovery-->
+        <dependency>
+            <groupId>com.alibaba.cloud</groupId>
+            <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+            <version>2021.0.1.0</version>
+        </dependency>
+        <!--feign-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-openfeign</artifactId>
+            <version>4.0.0</version>
+        </dependency>
+        <!--负载均衡-->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-loadbalancer</artifactId>
+            <version>4.0.0</version>
+        </dependency>
+        <!--httpClient的依赖，改变feign底层客户端实现，使用连接池 -->
+        <dependency>
+            <groupId>io.github.openfeign</groupId>
+            <artifactId>feign-httpclient</artifactId>
+            <version>12.0</version>
+        </dependency>
+
+
     </dependencies>
 
     <build>

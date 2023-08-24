@@ -2,20 +2,25 @@ package com.heri.project.controller;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.heri.apicommon.common.BaseResponse;
+import com.heri.apicommon.common.DeleteRequest;
+import com.heri.apicommon.common.ErrorCode;
+import com.heri.apicommon.common.ResultUtils;
+import com.heri.apicommon.constant.UserConstant;
+import com.heri.apicommon.exception.BusinessException;
+import com.heri.apicommon.exception.ThrowUtils;
+import com.heri.apicommon.model.entity.InterfaceInfo;
 import com.heri.apicommon.model.entity.User;
 import com.heri.apicommon.model.entity.UserInterfaceInfo;
 import com.heri.project.annotation.AuthCheck;
-import com.heri.project.common.*;
-import com.heri.project.constant.CommonConstant;
-import com.heri.project.constant.UserConstant;
-import com.heri.project.exception.BusinessException;
 import com.heri.project.model.dto.userInterfaceInfo.UserInterfaceInfoAddRequest;
 import com.heri.project.model.dto.userInterfaceInfo.UserInterfaceInfoQueryRequest;
 import com.heri.project.model.dto.userInterfaceInfo.UserInterfaceInfoUpdateRequest;
+import com.heri.project.model.vo.LoginUserVO;
+import com.heri.project.service.InterfaceInfoService;
 import com.heri.project.service.UserInterfaceInfoService;
 import com.heri.project.service.UserService;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.BeanUtils;
 import org.springframework.web.bind.annotation.*;
 
@@ -39,7 +44,9 @@ public class UserInterfaceInfoController {
     @Resource
     private UserService userService;
 
-    // region 增删改查
+    @Resource
+    private InterfaceInfoService interfaceInfoService;
+
 
     /**
      * 创建
@@ -57,15 +64,25 @@ public class UserInterfaceInfoController {
         UserInterfaceInfo userInterfaceInfo = new UserInterfaceInfo();
         BeanUtils.copyProperties(userInterfaceInfoAddRequest, userInterfaceInfo);
         // 校验
-        userInterfaceInfoService.validUserInterfaceInfo(userInterfaceInfo, true);
-        User loginUser = userService.getLoginUser(request);
-        userInterfaceInfo.setUserId(loginUser.getId());
-        boolean result = userInterfaceInfoService.save(userInterfaceInfo);
-        if (!result) {
-            throw new BusinessException(ErrorCode.OPERATION_ERROR);
+        isLegal(userInterfaceInfo);
+        boolean result = userInterfaceInfoService.addUserInterface(userInterfaceInfo);
+        ThrowUtils.throwIf(!result, ErrorCode.OPERATION_ERROR);//保存失败报错
+        long newUserInterfaceInfoId = userInterfaceInfo.getId();
+        return ResultUtils.success(newUserInterfaceInfoId);
+    }
+
+    private void isLegal(UserInterfaceInfo userInterfaceInfo) {
+        Long userId = userInterfaceInfo.getUserId();
+        Long interfaceInfoId = userInterfaceInfo.getInterfaceInfoId();
+
+        boolean userExists = userService.lambdaQuery().eq(User::getId, userId).exists();
+        if (!userExists) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "用户不存在");
         }
-        long newInterfaceInfoId = userInterfaceInfo.getId();
-        return ResultUtils.success(newInterfaceInfoId);
+        boolean interfaceInfoExists = interfaceInfoService.lambdaQuery().eq(InterfaceInfo::getId, interfaceInfoId).exists();
+        if (!interfaceInfoExists) {
+            throw new BusinessException(ErrorCode.SYSTEM_ERROR, "接口不存在");
+        }
     }
 
     /**
@@ -81,15 +98,13 @@ public class UserInterfaceInfoController {
         if (deleteRequest == null || deleteRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
-        User user = userService.getLoginUser(request);
+        LoginUserVO user = userService.getLoginUserByThreadLocal();
         long id = deleteRequest.getId();
         // 判断是否存在
         UserInterfaceInfo oldInterfaceInfo = userInterfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
+        ThrowUtils.throwIf(oldInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
         // 仅本人或管理员可删除
-        if (!oldInterfaceInfo.getUserId().equals(user.getId()) && !userService.isAdmin(request)) {
+        if (!oldInterfaceInfo.getUserId().equals(user.getId()) && !userService.isAdmin(user)) {
             throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
         }
         boolean b = userInterfaceInfoService.removeById(id);
@@ -106,7 +121,7 @@ public class UserInterfaceInfoController {
     @PostMapping("/update")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
     public BaseResponse<Boolean> updateInterfaceInfo(@RequestBody UserInterfaceInfoUpdateRequest userinterfaceInfoUpdateRequest,
-                                            HttpServletRequest request) {
+                                                     HttpServletRequest request) {
         if (userinterfaceInfoUpdateRequest == null || userinterfaceInfoUpdateRequest.getId() <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
@@ -114,17 +129,10 @@ public class UserInterfaceInfoController {
         BeanUtils.copyProperties(userinterfaceInfoUpdateRequest, userInterfaceInfo);
         // 参数校验
         userInterfaceInfoService.validUserInterfaceInfo(userInterfaceInfo, false);
-        User user = userService.getLoginUser(request);
         long id = userinterfaceInfoUpdateRequest.getId();
         // 判断是否存在
-        UserInterfaceInfo oldInterfaceInfo = userInterfaceInfoService.getById(id);
-        if (oldInterfaceInfo == null) {
-            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
-        }
-        // 仅本人或管理员可修改
-        if (!oldInterfaceInfo.getUserId().equals(user.getId()) && !userService.isAdmin(request)) {
-            throw new BusinessException(ErrorCode.NO_AUTH_ERROR);
-        }
+        UserInterfaceInfo oldUserInterfaceInfo = userInterfaceInfoService.getById(id);
+        ThrowUtils.throwIf(oldUserInterfaceInfo == null, ErrorCode.NOT_FOUND_ERROR);
         boolean result = userInterfaceInfoService.updateById(userInterfaceInfo);
         return ResultUtils.success(result);
     }
@@ -135,13 +143,16 @@ public class UserInterfaceInfoController {
      * @param id
      * @return
      */
-    @GetMapping("/get")
+    @GetMapping("/get/vo")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    public BaseResponse<UserInterfaceInfo> getInterfaceInfoById(long id) {
+    public BaseResponse<UserInterfaceInfo> getUserInterfaceInfoById(long id) {
         if (id <= 0) {
             throw new BusinessException(ErrorCode.PARAMS_ERROR);
         }
         UserInterfaceInfo userInterfaceInfo = userInterfaceInfoService.getById(id);
+        if (userInterfaceInfo == null) {
+            throw new BusinessException(ErrorCode.NOT_FOUND_ERROR);
+        }
         return ResultUtils.success(userInterfaceInfo);
     }
 
@@ -164,33 +175,21 @@ public class UserInterfaceInfoController {
     }
 
     /**
-     * 分页获取列表
+     * 获取列表（管理员类）
      *
      * @param userInterfaceInfoQueryRequest
-     * @param request
      * @return
      */
-    @GetMapping("/list/page")
+    @PostMapping("/list/page/vo")
     @AuthCheck(mustRole = UserConstant.ADMIN_ROLE)
-    public BaseResponse<Page<UserInterfaceInfo>> listInterfaceInfoByPage(UserInterfaceInfoQueryRequest userInterfaceInfoQueryRequest, HttpServletRequest request) {
-        if (userInterfaceInfoQueryRequest == null) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        }
-        UserInterfaceInfo userInterfaceInfoQuery = new UserInterfaceInfo();
-        BeanUtils.copyProperties(userInterfaceInfoQueryRequest, userInterfaceInfoQuery);
+    public BaseResponse<Page<UserInterfaceInfo>> ListInterfaceByPage(@RequestBody UserInterfaceInfoQueryRequest userInterfaceInfoQueryRequest) {
         long current = userInterfaceInfoQueryRequest.getCurrent();
         long size = userInterfaceInfoQueryRequest.getPageSize();
-        String sortField = userInterfaceInfoQueryRequest.getSortField();
-        String sortOrder = userInterfaceInfoQueryRequest.getSortOrder();
         // 限制爬虫
-        if (size > 50) {
-            throw new BusinessException(ErrorCode.PARAMS_ERROR);
-        }
-        QueryWrapper<UserInterfaceInfo> queryWrapper = new QueryWrapper<>(userInterfaceInfoQuery);
-        queryWrapper.orderBy(StringUtils.isNotBlank(sortField),
-                sortOrder.equals(CommonConstant.SORT_ORDER_ASC), sortField);
-        Page<UserInterfaceInfo> interfaceInfoPage = userInterfaceInfoService.page(new Page<>(current, size), queryWrapper);
-        return ResultUtils.success(interfaceInfoPage);
+        ThrowUtils.throwIf(size > 20, ErrorCode.PARAMS_ERROR);
+        Page<UserInterfaceInfo> userInterfaceInfoPage = userInterfaceInfoService.page(new Page<>(current, size),
+                userInterfaceInfoService.getQueryWrapper(userInterfaceInfoQueryRequest));
+        return ResultUtils.success(userInterfaceInfoPage);
     }
 
 

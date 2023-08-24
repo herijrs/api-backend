@@ -26,4 +26,10 @@
         status,createTime,updateTime,
         method,userId,isDelete.requestParams
     </sql>
+    <select id="listInterfaceInfoWithDelete" resultType="com.heri.apicommon.model.entity.InterfaceInfo">
+        select *
+        from interface_info
+        /*delete == 0 代表未删除，status == 0 代表已关闭，并且更新时间要*/
+        where (isDelete = 0 AND status = 0) AND updateTime <![CDATA[ <= ]]> #{tenDaysAgoDate};
+    </select>
 </mapper>
